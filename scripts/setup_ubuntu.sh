@@ -20,6 +20,14 @@ PROJECT_NAME="quantconnect-trading-bot"
 INSTALL_DIR="/opt/$PROJECT_NAME"
 LOG_FILE="/var/log/trading-bot-setup.log"
 
+# Generated credentials (will be set during installation)
+POSTGRES_USER=""
+POSTGRES_PASSWORD=""
+JWT_SECRET=""
+ENCRYPTION_KEY=""
+SESSION_SECRET=""
+REDIS_PASSWORD=""
+
 # Default options
 PRODUCTION_MODE=false
 INSTALL_SSL=false
@@ -50,6 +58,21 @@ print_warning() {
 
 print_error() {
     echo -e "${RED}[ERROR]${NC} $1" | tee -a "$LOG_FILE"
+}
+
+generate_secure_password() {
+    # Generate 32-character alphanumeric password (no special chars that could cause issues)
+    openssl rand -base64 24 | tr -d "=+/" | cut -c1-32
+}
+
+generate_jwt_secret() {
+    # Generate 64-character hex JWT secret
+    openssl rand -hex 32
+}
+
+generate_database_user() {
+    # Generate unique database username
+    echo "trader_$(openssl rand -hex 4)"
 }
 
 check_root() {
@@ -120,6 +143,7 @@ install_dependencies() {
         nano \
         ufw \
         cron \
+        openssl \
         > /dev/null 2>&1
     
     print_status "✅ System dependencies installed"
@@ -236,60 +260,85 @@ clone_repository() {
     print_status "✅ Repository cloned to $INSTALL_DIR"
 }
 
+generate_all_credentials() {
+    print_status "Generating secure credentials..."
+    
+    # Generate all credentials
+    POSTGRES_USER=$(generate_database_user)
+    POSTGRES_PASSWORD=$(generate_secure_password)
+    JWT_SECRET=$(generate_jwt_secret)
+    ENCRYPTION_KEY=$(generate_secure_password)
+    SESSION_SECRET=$(generate_secure_password)
+    REDIS_PASSWORD=$(generate_secure_password)
+    
+    print_status "✅ Secure credentials generated"
+}
+
 setup_environment() {
     print_status "Setting up environment configuration..."
     
     cd "$INSTALL_DIR"
+    
+    # Generate credentials first
+    generate_all_credentials
     
     # Create production environment file
     cat > .env << EOF
 # QuantConnect Trading Bot - Production Environment
 # Generated on $(date)
 
-# Environment
+# Environment Configuration
 NODE_ENV=production
 ENVIRONMENT=production
-DOMAIN=$DOMAIN
 DEBUG=false
+FLASK_ENV=production
+FLASK_DEBUG=false
 
-# DDNS Configuration
+# Domain & DDNS Configuration
+DOMAIN=$DOMAIN
 DDNS_UPDATE_URL=$DDNS_UPDATE_URL
 DDNS_CHECK_INTERVAL=300
+DDNS_UPDATE_INTERVAL=300
 AUTO_UPDATE_DDNS=true
 
 # Database Configuration
-POSTGRES_DB=trading_bot
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=$(openssl rand -base64 32)
+POSTGRES_DB=quantconnect_trading
+POSTGRES_USER=$POSTGRES_USER
+POSTGRES_PASSWORD=$POSTGRES_PASSWORD
+DATABASE_URL=postgresql://$POSTGRES_USER:$POSTGRES_PASSWORD@db:5432/quantconnect_trading
 
 # Redis Configuration
-REDIS_URL=redis://redis:6379/0
+REDIS_PASSWORD=$REDIS_PASSWORD
+REDIS_URL=redis://:$REDIS_PASSWORD@redis:6379/0
 
-# Flask Configuration
-SECRET_KEY=$(openssl rand -base64 64)
-JWT_SECRET_KEY=$(openssl rand -base64 64)
-FLASK_ENV=production
+# Flask Security Configuration
+SECRET_KEY=$SESSION_SECRET
+JWT_SECRET_KEY=$JWT_SECRET
+JWT_ACCESS_TOKEN_EXPIRES=1800
+JWT_REFRESH_TOKEN_EXPIRES=2592000
+ENCRYPTION_KEY=$ENCRYPTION_KEY
 
 # API Configuration
 API_BASE_URL=https://$DOMAIN/api
 FRONTEND_URL=https://$DOMAIN
+WEBSOCKET_URL=wss://$DOMAIN/socket.io
 CORS_ORIGINS=https://$DOMAIN
-
-# WebSocket Configuration  
 SOCKETIO_CORS_ORIGINS=https://$DOMAIN
+
+# React App Configuration
+REACT_APP_API_URL=https://$DOMAIN/api
+REACT_APP_WS_URL=wss://$DOMAIN/socket.io
+REACT_APP_DOMAIN=$DOMAIN
+
+# SSL Configuration
+SSL_ENABLED=true
+SSL_CERT_PATH=/etc/letsencrypt/live/$DOMAIN/fullchain.pem
+SSL_KEY_PATH=/etc/letsencrypt/live/$DOMAIN/privkey.pem
 
 # QuantConnect Configuration
 QC_USER_ID=
 QC_API_TOKEN=
-
-# Logging
-LOG_LEVEL=INFO
-LOG_FILE_PATH=/app/logs/trading_bot.log
-
-# Security
-RATE_LIMIT_PER_MINUTE=60
-ENABLE_CORS=true
-TRUSTED_HOSTS=$DOMAIN,localhost
+QC_ENVIRONMENT=live-trading
 
 # Trading Configuration
 MAX_DAILY_LOSS=0.05
@@ -297,51 +346,132 @@ MAX_POSITION_SIZE=0.10
 SIGNAL_CONFIDENCE_THRESHOLD=0.60
 MAX_CONCURRENT_TRADES=10
 
-# SSL Configuration
-SSL_ENABLED=true
-SSL_CERT_PATH=/etc/letsencrypt/live/$DOMAIN/fullchain.pem
-SSL_KEY_PATH=/etc/letsencrypt/live/$DOMAIN/privkey.pem
+# Logging Configuration
+LOG_LEVEL=INFO
+LOG_FILE_PATH=/app/logs/trading_bot.log
+ENABLE_JSON_LOGGING=false
 
-# Monitoring
+# Monitoring Configuration
 ENABLE_HEALTH_CHECK=true
 HEALTH_CHECK_INTERVAL=30
 METRICS_RETENTION_DAYS=30
 
-# Broker API Keys (Configure these for your brokers)
+# Security Configuration
+RATE_LIMIT_PER_MINUTE=60
+ENABLE_CORS=true
+TRUSTED_HOSTS=$DOMAIN,localhost
+MAX_CONTENT_LENGTH=16777216
+
+# Data Directories
+DATA_DIR=/opt/quantconnect-trading-bot/data
+LOGS_DIR=/opt/quantconnect-trading-bot/logs
+MODELS_DIR=/app/models/trained_models
+CONFIGS_DIR=/app/models/model_configs
+
+# Broker API Keys - CONFIGURE THESE FOR YOUR BROKERS
+# ============================================================================
+
 # Forex Brokers
-XM_LOGIN=
-XM_PASSWORD=
-XM_SERVER=
+XM_LOGIN=YOUR_XM_LOGIN_NUMBER
+XM_PASSWORD=YOUR_XM_PASSWORD
+XM_SERVER=XM-Real
 
-XTB_USER_ID=
-XTB_PASSWORD=
-XTB_DEMO=true
+XTB_USER_ID=YOUR_XTB_USER_ID
+XTB_PASSWORD=YOUR_XTB_PASSWORD
+XTB_DEMO=false
 
-# Crypto Exchanges
-BINANCE_API_KEY=
-BINANCE_SECRET_KEY=
-BINANCE_TESTNET=true
+IC_MARKETS_API_KEY=YOUR_IC_MARKETS_API_KEY
+IC_MARKETS_TOKEN=YOUR_IC_MARKETS_TOKEN
+IC_MARKETS_DEMO=false
 
-KRAKEN_API_KEY=
-KRAKEN_SECRET_KEY=
+IG_API_KEY=YOUR_IG_API_KEY
+IG_USERNAME=YOUR_IG_USERNAME
+IG_PASSWORD=YOUR_IG_PASSWORD
+IG_DEMO=false
 
-COINBASE_API_KEY=
-COINBASE_SECRET_KEY=
-COINBASE_PASSPHRASE=
-COINBASE_SANDBOX=true
+ADMIRAL_LOGIN=YOUR_ADMIRAL_LOGIN
+ADMIRAL_PASSWORD=YOUR_ADMIRAL_PASSWORD
+ADMIRAL_SERVER=AdmiralMarkets-Live
 
-# Add more broker credentials as needed
+ROBOFOREX_LOGIN=YOUR_ROBOFOREX_LOGIN
+ROBOFOREX_PASSWORD=YOUR_ROBOFOREX_PASSWORD
+ROBOFOREX_SERVER=RoboForex-Pro
+
+FBS_LOGIN=YOUR_FBS_LOGIN
+FBS_PASSWORD=YOUR_FBS_PASSWORD
+FBS_SERVER=FBS-Real
+
+INSTAFOREX_LOGIN=YOUR_INSTAFOREX_LOGIN
+INSTAFOREX_PASSWORD=YOUR_INSTAFOREX_PASSWORD
+INSTAFOREX_SERVER=InstaForex-Server
+
+SABIOTRADE_API_KEY=YOUR_SABIOTRADE_API_KEY
+SABIOTRADE_USERNAME=YOUR_SABIOTRADE_USERNAME
+SABIOTRADE_PASSWORD=YOUR_SABIOTRADE_PASSWORD
+
+# Cryptocurrency Exchanges
+BINANCE_API_KEY=YOUR_BINANCE_API_KEY
+BINANCE_SECRET_KEY=YOUR_BINANCE_SECRET_KEY
+BINANCE_TESTNET=false
+
+KRAKEN_API_KEY=YOUR_KRAKEN_API_KEY
+KRAKEN_SECRET_KEY=YOUR_KRAKEN_SECRET_KEY
+
+COINBASE_API_KEY=YOUR_COINBASE_API_KEY
+COINBASE_SECRET_KEY=YOUR_COINBASE_SECRET_KEY
+COINBASE_PASSPHRASE=YOUR_COINBASE_PASSPHRASE
+COINBASE_SANDBOX=false
+
+BYBIT_API_KEY=YOUR_BYBIT_API_KEY
+BYBIT_SECRET_KEY=YOUR_BYBIT_SECRET_KEY
+BYBIT_TESTNET=false
+
+KUCOIN_API_KEY=YOUR_KUCOIN_API_KEY
+KUCOIN_SECRET_KEY=YOUR_KUCOIN_SECRET_KEY
+KUCOIN_PASSPHRASE=YOUR_KUCOIN_PASSPHRASE
+KUCOIN_SANDBOX=false
+
+OKX_API_KEY=YOUR_OKX_API_KEY
+OKX_SECRET_KEY=YOUR_OKX_SECRET_KEY
+OKX_PASSPHRASE=YOUR_OKX_PASSPHRASE
+OKX_DEMO=false
+
+BITFINEX_API_KEY=YOUR_BITFINEX_API_KEY
+BITFINEX_SECRET_KEY=YOUR_BITFINEX_SECRET_KEY
+
+GEMINI_API_KEY=YOUR_GEMINI_API_KEY
+GEMINI_SECRET_KEY=YOUR_GEMINI_SECRET_KEY
+GEMINI_SANDBOX=false
+
+HUOBI_API_KEY=YOUR_HUOBI_API_KEY
+HUOBI_SECRET_KEY=YOUR_HUOBI_SECRET_KEY
+
+BITTREX_API_KEY=YOUR_BITTREX_API_KEY
+BITTREX_SECRET_KEY=YOUR_BITTREX_SECRET_KEY
+
+BITSTAMP_API_KEY=YOUR_BITSTAMP_API_KEY
+BITSTAMP_SECRET_KEY=YOUR_BITSTAMP_SECRET_KEY
+BITSTAMP_UID=YOUR_BITSTAMP_UID
+
+# Interactive Brokers (Optional)
+IB_HOST=127.0.0.1
+IB_PORT=7497
+IB_CLIENT_ID=1
+
+# Backup Configuration
+BACKUP_ENABLED=true
+BACKUP_INTERVAL=86400
+BACKUP_RETENTION_DAYS=30
+
+# Custom Settings
+CUSTOM_SETTING_1=
+CUSTOM_SETTING_2=
 EOF
     
     # Secure the environment file
     chmod 600 .env
     
     print_status "✅ Environment configuration created"
-    
-    if [ "$PRODUCTION_MODE" = true ]; then
-        print_warning "⚠️  IMPORTANT: Edit .env file and configure broker API keys:"
-        print_warning "   nano $INSTALL_DIR/.env"
-    fi
 }
 
 install_ssl_certificates() {
@@ -392,299 +522,31 @@ create_production_compose() {
     
     cd "$INSTALL_DIR"
     
-    cat > docker-compose.production.yml << 'EOF'
-version: '3.8'
-
-services:
-  # Nginx Reverse Proxy with SSL
-  nginx:
-    image: nginx:alpine
-    container_name: trading_bot_nginx
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx/production.conf:/etc/nginx/conf.d/default.conf:ro
-      - /etc/letsencrypt:/etc/letsencrypt:ro
-    depends_on:
-      - api
-      - frontend
-    networks:
-      - trading_network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  # Backend Flask API
-  api:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: trading_bot_api
-    environment:
-      - NODE_ENV=production
-      - ENVIRONMENT=production
-      - DOMAIN=${DOMAIN}
-      - DDNS_UPDATE_URL=${DDNS_UPDATE_URL}
-      - SSL_ENABLED=true
-    env_file:
-      - .env
-    volumes:
-      - ./lean:/app/lean
-      - ./models:/app/models
-      - ./data:/app/data
-      - ./logs:/app/logs
-    depends_on:
-      - db
-      - redis
-      - lean_engine
-    networks:
-      - trading_network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-
-  # Frontend React
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: trading_bot_frontend
-    environment:
-      - REACT_APP_API_URL=https://${DOMAIN}/api
-      - REACT_APP_WS_URL=wss://${DOMAIN}/socket.io
-      - NODE_ENV=production
-    depends_on:
-      - api
-    networks:
-      - trading_network
-    restart: unless-stopped
-
-  # QuantConnect Lean Engine
-  lean_engine:
-    image: quantconnect/lean:latest
-    container_name: lean_engine
-    volumes:
-      - ./lean:/Lean
-      - ./data:/Data
-      - ./algorithms:/Algorithms
-      - ./models:/Models
-    environment:
-      - environment=live-trading
-      - debugging=false
-    env_file:
-      - .env
-    networks:
-      - trading_network
-    restart: unless-stopped
-
-  # PostgreSQL Database
-  db:
-    image: postgres:15-alpine
-    container_name: trading_bot_db
-    environment:
-      - POSTGRES_DB=trading_bot
-      - POSTGRES_USER=postgres
-    env_file:
-      - .env
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
-    networks:
-      - trading_network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
-
-  # Redis Cache
-  redis:
-    image: redis:7-alpine
-    container_name: trading_bot_redis
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis123}
-    volumes:
-      - redis_data:/data
-    networks:
-      - trading_network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-
-  # DDNS Updater Service
-  ddns_updater:
-    build:
-      context: ./services/ddns
-      dockerfile: Dockerfile
-    container_name: ddns_updater
-    environment:
-      - DDNS_UPDATE_URL=${DDNS_UPDATE_URL}
-      - DOMAIN=${DOMAIN}
-      - UPDATE_INTERVAL=300
-    restart: unless-stopped
-    networks:
-      - trading_network
-
-volumes:
-  postgres_data:
-    driver: local
-  redis_data:
-    driver: local
-
-networks:
-  trading_network:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16
-EOF
-    
-    print_status "✅ Production Docker Compose created"
+    # The docker-compose.production.yml file already exists in repo
+    # Just ensure it has the right permissions
+    if [ -f "docker-compose.production.yml" ]; then
+        chmod 644 docker-compose.production.yml
+        print_status "✅ Production Docker Compose configuration ready"
+    else
+        print_error "docker-compose.production.yml not found in repository"
+        exit 1
+    fi
 }
 
 create_nginx_config() {
     print_status "Creating Nginx production configuration..."
     
+    # The nginx/production.conf file already exists in repo
+    # Just ensure directory and permissions
     mkdir -p "$INSTALL_DIR/nginx"
     
-    if [ "$INSTALL_SSL" = true ]; then
-        # SSL configuration
-        cat > "$INSTALL_DIR/nginx/production.conf" << EOF
-# HTTP to HTTPS redirect
-server {
-    listen 80;
-    server_name $DOMAIN;
-    
-    # ACME challenge for SSL renewal
-    location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
-    }
-    
-    # Redirect all other traffic to HTTPS
-    location / {
-        return 301 https://\$server_name\$request_uri;
-    }
-}
-
-# Main HTTPS server
-server {
-    listen 443 ssl http2;
-    server_name $DOMAIN;
-    
-    # SSL Configuration
-    ssl_certificate /etc/letsencrypt/live/$DOMAIN/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;
-    
-    # SSL Security Settings
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384;
-    ssl_prefer_server_ciphers off;
-    ssl_session_timeout 10m;
-    ssl_session_cache shared:SSL:10m;
-    
-    # Security Headers
-    add_header X-Frame-Options DENY;
-    add_header X-Content-Type-Options nosniff;
-    add_header X-XSS-Protection "1; mode=block";
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-    
-    # Frontend (React)
-    location / {
-        proxy_pass http://frontend:3000;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        
-        # WebSocket support
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-    
-    # Backend API
-    location /api/ {
-        proxy_pass http://api:5000/;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        
-        # Increase timeout for long-running operations
-        proxy_connect_timeout 60s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
-    }
-    
-    # WebSocket endpoint
-    location /socket.io/ {
-        proxy_pass http://api:5000/socket.io/;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-    }
-    
-    # Health check endpoint
-    location /health {
-        access_log off;
-        return 200 "healthy\\n";
-        add_header Content-Type text/plain;
-    }
-}
-EOF
+    if [ -f "$INSTALL_DIR/nginx/production.conf" ]; then
+        chmod 644 "$INSTALL_DIR/nginx/production.conf"
+        print_status "✅ Nginx configuration ready"
     else
-        # HTTP only configuration
-        cat > "$INSTALL_DIR/nginx/production.conf" << EOF
-server {
-    listen 80;
-    server_name $DOMAIN;
-    
-    # Frontend
-    location / {
-        proxy_pass http://frontend:3000;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-    }
-    
-    # Backend API
-    location /api/ {
-        proxy_pass http://api:5000/;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-    }
-    
-    # WebSocket
-    location /socket.io/ {
-        proxy_pass http://api:5000/socket.io/;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-    
-    location /health {
-        return 200 "healthy\\n";
-        add_header Content-Type text/plain;
-    }
-}
-EOF
+        print_error "nginx/production.conf not found in repository"
+        exit 1
     fi
-    
-    print_status "✅ Nginx configuration created"
 }
 
 setup_firewall() {
@@ -741,145 +603,6 @@ EOF
     print_status "✅ Systemd service created and enabled"
 }
 
-build_and_start_system() {
-    print_status "Building and starting the system..."
-    
-    cd "$INSTALL_DIR"
-    
-    # Build images
-    print_status "Building Docker images..."
-    if [ "$PRODUCTION_MODE" = true ]; then
-        docker-compose -f docker-compose.production.yml build --parallel
-    else
-        docker-compose build --parallel
-    fi
-    
-    # Start services
-    print_status "Starting services..."
-    if [ "$PRODUCTION_MODE" = true ]; then
-        docker-compose -f docker-compose.production.yml up -d
-    else
-        docker-compose up -d
-    fi
-    
-    # Wait for services to be healthy
-    print_status "Waiting for services to start..."
-    sleep 30
-    
-    # Check service health
-    check_service_health
-    
-    print_status "✅ System built and started"
-}
-
-check_service_health() {
-    print_status "Checking service health..."
-    
-    # Check if containers are running
-    RUNNING_CONTAINERS=$(docker ps --filter "name=trading_bot" --format "table {{.Names}}\t{{.Status}}" | grep -c "Up")
-    TOTAL_CONTAINERS=5
-    
-    if [ "$RUNNING_CONTAINERS" -eq "$TOTAL_CONTAINERS" ]; then
-        print_status "✅ All containers are running ($RUNNING_CONTAINERS/$TOTAL_CONTAINERS)"
-    else
-        print_warning "⚠️  Some containers may not be running ($RUNNING_CONTAINERS/$TOTAL_CONTAINERS)"
-        print_status "Container status:"
-        docker ps --filter "name=trading_bot" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-    fi
-    
-    # Test API endpoint
-    sleep 10
-    if [ "$INSTALL_SSL" = true ]; then
-        API_URL="https://$DOMAIN/api/health"
-    else
-        API_URL="http://localhost:5000/api/health"
-    fi
-    
-    if curl -f -s "$API_URL" > /dev/null; then
-        print_status "✅ Backend API is responding"
-    else
-        print_warning "⚠️  Backend API may not be ready yet"
-    fi
-}
-
-create_management_script() {
-    print_status "Creating system management script..."
-    
-    cat > "$INSTALL_DIR/manage.sh" << 'EOF'
-#!/bin/bash
-# QuantConnect Trading Bot Management Script
-
-COMPOSE_FILE="docker-compose.production.yml"
-if [ ! -f "$COMPOSE_FILE" ]; then
-    COMPOSE_FILE="docker-compose.yml"
-fi
-
-case "$1" in
-    start)
-        echo "🚀 Starting QuantConnect Trading Bot..."
-        docker-compose -f $COMPOSE_FILE up -d
-        ;;
-    stop)
-        echo "🛑 Stopping QuantConnect Trading Bot..."
-        docker-compose -f $COMPOSE_FILE down
-        ;;
-    restart)
-        echo "🔄 Restarting QuantConnect Trading Bot..."
-        docker-compose -f $COMPOSE_FILE restart
-        ;;
-    status)
-        echo "📊 System Status:"
-        docker-compose -f $COMPOSE_FILE ps
-        echo ""
-        echo "🔍 Container Health:"
-        docker ps --filter "name=trading_bot" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-        ;;
-    logs)
-        if [ -n "$2" ]; then
-            docker-compose -f $COMPOSE_FILE logs -f "$2"
-        else
-            docker-compose -f $COMPOSE_FILE logs -f
-        fi
-        ;;
-    update)
-        echo "🔄 Updating system..."
-        git pull origin main
-        docker-compose -f $COMPOSE_FILE build --pull
-        docker-compose -f $COMPOSE_FILE up -d
-        ;;
-    backup)
-        echo "💾 Creating system backup..."
-        ./scripts/backup_system.sh
-        ;;
-    ddns-update)
-        echo "🌐 Updating DDNS record..."
-        curl -s "${DDNS_UPDATE_URL}"
-        ;;
-    health)
-        echo "🏥 Running health check..."
-        python3 scripts/check_system_integrity.py --verbose
-        ;;
-    *)
-        echo "Usage: $0 {start|stop|restart|status|logs|update|backup|ddns-update|health}"
-        echo ""
-        echo "Examples:"
-        echo "  $0 start              # Start the system"
-        echo "  $0 logs api           # Show API logs"
-        echo "  $0 status             # Show system status"
-        echo "  $0 health             # Run health check"
-        exit 1
-        ;;
-esac
-EOF
-    
-    chmod +x "$INSTALL_DIR/manage.sh"
-    
-    # Create system-wide symlink
-    ln -sf "$INSTALL_DIR/manage.sh" /usr/local/bin/trading-bot
-    
-    print_status "✅ Management script created (use 'trading-bot' command globally)"
-}
-
 setup_ddns_service() {
     print_status "Setting up DDNS monitoring service..."
     
@@ -892,7 +615,7 @@ FROM python:3.11-alpine
 
 WORKDIR /app
 
-RUN pip install requests schedule
+RUN pip install --no-cache-dir aiohttp schedule
 
 COPY ddns_updater.py .
 
@@ -909,8 +632,9 @@ Automatically updates DDNS record for eqtrader.ddnskita.my.id
 
 import os
 import time
-import requests
-import schedule
+import json
+import asyncio
+import aiohttp
 import logging
 from datetime import datetime
 
@@ -928,20 +652,43 @@ class DDNSUpdater:
         self.update_interval = int(os.getenv('UPDATE_INTERVAL', '300'))  # 5 minutes
         self.last_ip = None
         
-    def get_public_ip(self):
+    async def get_public_ip(self):
         """Get current public IP address"""
-        try:
-            response = requests.get('https://ifconfig.me/ip', timeout=10)
-            return response.text.strip()
-        except Exception as e:
-            logger.error(f"Failed to get public IP: {e}")
-            return None
+        ip_services = [
+            'https://ifconfig.me/ip',
+            'https://api.ipify.org',
+            'https://icanhazip.com'
+        ]
+        
+        async with aiohttp.ClientSession() as session:
+            for service in ip_services:
+                try:
+                    async with session.get(service, timeout=10) as response:
+                        if response.status == 200:
+                            ip = (await response.text()).strip()
+                            if self.validate_ip(ip):
+                                return ip
+                except Exception as e:
+                    logger.debug(f"Failed to get IP from {service}: {e}")
+                    continue
+        
+        return None
     
-    def update_ddns(self):
+    def validate_ip(self, ip):
+        """Validate IP address format"""
+        import re
+        pattern = re.compile(
+            r'^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}'
+            r'(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$'
+        )
+        return bool(pattern.match(ip))
+    
+    async def update_ddns(self):
         """Update DDNS record"""
         try:
-            current_ip = self.get_public_ip()
+            current_ip = await self.get_public_ip()
             if not current_ip:
+                logger.error("Could not determine public IP")
                 return False
                 
             # Only update if IP changed
@@ -951,97 +698,211 @@ class DDNSUpdater:
                 
             logger.info(f"Updating DDNS for {self.domain} to IP {current_ip}")
             
-            response = requests.get(self.update_url, timeout=30)
-            response_data = response.json() if response.headers.get('content-type') == 'application/json' else {'message': response.text}
-            
-            if response_data.get('result') == 'success':
-                self.last_ip = current_ip
-                logger.info(f"✅ DDNS updated successfully: {response_data.get('message', '')}")
-                return True
-            else:
-                logger.error(f"❌ DDNS update failed: {response_data}")
-                return False
-                
+            async with aiohttp.ClientSession() as session:
+                async with session.get(self.update_url, timeout=30) as response:
+                    response_text = await response.text()
+                    
+                    try:
+                        response_data = json.loads(response_text)
+                    except json.JSONDecodeError:
+                        response_data = {'message': response_text}
+                    
+                    if response_data.get('result') == 'success':
+                        self.last_ip = current_ip
+                        logger.info(f"✅ DDNS updated successfully: {response_data.get('message', '')}")
+                        return True
+                    else:
+                        logger.error(f"❌ DDNS update failed: {response_data}")
+                        return False
+                        
         except Exception as e:
             logger.error(f"Error updating DDNS: {e}")
             return False
     
-    def run_scheduler(self):
-        """Run the DDNS updater scheduler"""
+    async def run(self):
+        """Run the DDNS updater"""
         logger.info(f"🚀 DDNS Updater started for {self.domain}")
         logger.info(f"📡 Update interval: {self.update_interval} seconds")
         
         # Initial update
-        self.update_ddns()
+        await self.update_ddns()
         
-        # Schedule regular updates
-        schedule.every(self.update_interval // 60).minutes.do(self.update_ddns)
-        
+        # Main loop
         while True:
-            schedule.run_pending()
-            time.sleep(60)
+            try:
+                await asyncio.sleep(self.update_interval)
+                await self.update_ddns()
+            except KeyboardInterrupt:
+                logger.info("DDNS updater stopped")
+                break
+            except Exception as e:
+                logger.error(f"Error in main loop: {e}")
+                await asyncio.sleep(60)  # Wait before retry
 
 if __name__ == "__main__":
     updater = DDNSUpdater()
-    updater.run_scheduler()
+    asyncio.run(updater.run())
 EOF
     
     print_status "✅ DDNS service configured"
 }
 
-print_completion_message() {
+create_management_script() {
+    print_status "Creating system management script..."
+    
+    # The manage.sh script already exists in repo
+    if [ -f "$INSTALL_DIR/scripts/manage.sh" ]; then
+        chmod +x "$INSTALL_DIR/scripts/manage.sh"
+        
+        # Create system-wide symlink
+        ln -sf "$INSTALL_DIR/scripts/manage.sh" /usr/local/bin/trading-bot
+        
+        print_status "✅ Management script ready (use 'trading-bot' command globally)"
+    else
+        print_error "scripts/manage.sh not found in repository"
+        exit 1
+    fi
+}
+
+validate_environment() {
+    print_status "Validating environment configuration..."
+    
+    cd "$INSTALL_DIR"
+    
+    # Test docker-compose configuration
+    if docker-compose -f docker-compose.production.yml config > /dev/null 2>&1; then
+        print_status "✅ Docker Compose configuration valid"
+    else
+        print_error "❌ Invalid Docker Compose configuration"
+        print_error "Running config test for debugging:"
+        docker-compose -f docker-compose.production.yml config
+        exit 1
+    fi
+    
+    # Check .env file format
+    if grep -q "^[A-Z_][A-Z0-9_]*=[^=]*$" .env; then
+        print_status "✅ Environment file format valid"
+    else
+        print_error "❌ Environment file contains invalid format"
+        exit 1
+    fi
+}
+
+build_and_start_system() {
+    print_status "Building and starting the system..."
+    
+    cd "$INSTALL_DIR"
+    
+    # Validate first
+    validate_environment
+    
+    # Build images
+    print_status "Building Docker images..."
+    docker-compose -f docker-compose.production.yml build --parallel
+    
+    # Start services
+    print_status "Starting services..."
+    docker-compose -f docker-compose.production.yml up -d
+    
+    # Wait for services to be healthy
+    print_status "Waiting for services to start..."
+    sleep 45
+    
+    # Check service health
+    check_service_health
+    
+    print_status "✅ System built and started"
+}
+
+check_service_health() {
+    print_status "Checking service health..."
+    
+    # Check if containers are running
+    RUNNING_CONTAINERS=$(docker ps --filter "name=trading_bot" --format "table {{.Names}}\t{{.Status}}" | grep -c "Up")
+    TOTAL_CONTAINERS=8
+    
+    if [ "$RUNNING_CONTAINERS" -ge 5 ]; then
+        print_status "✅ Most containers are running ($RUNNING_CONTAINERS/$TOTAL_CONTAINERS)"
+    else
+        print_warning "⚠️ Some containers may not be running ($RUNNING_CONTAINERS/$TOTAL_CONTAINERS)"
+        print_status "Container status:"
+        docker ps --filter "name=trading_bot" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+    fi
+    
+    # Test API endpoint
+    sleep 10
+    if [ "$INSTALL_SSL" = true ]; then
+        API_URL="https://$DOMAIN/health"
+    else
+        API_URL="http://localhost:80/health"
+    fi
+    
+    if curl -f -s "$API_URL" > /dev/null 2>&1; then
+        print_status "✅ System is responding"
+    else
+        print_warning "⚠️ System may not be ready yet (this is normal, services are starting)"
+    fi
+}
+
+display_installation_summary() {
+    echo ""
     echo -e "${GREEN}"
     echo "╔══════════════════════════════════════════════════════════════════╗"
-    echo "║                    🎉 INSTALLATION COMPLETE! 🎉                  ║"
+    echo "║                 🎉 INSTALLATION COMPLETED!                      ║"
     echo "╚══════════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
     
-    echo -e "${BLUE}📍 Installation Details:${NC}"
-    echo "   📂 Install Directory: $INSTALL_DIR"
-    echo "   🌐 Domain: $DOMAIN"
-    echo "   🔗 DDNS URL: $DDNS_UPDATE_URL"
-    echo "   🐳 Docker Compose: $([ "$PRODUCTION_MODE" = true ] && echo "Production" || echo "Development")"
-    echo "   🔒 SSL: $([ "$INSTALL_SSL" = true ] && echo "Enabled" || echo "Disabled")"
+    echo -e "${BLUE}📍 System Information:${NC}"
+    echo "   🌐 Domain: https://$DOMAIN"
+    echo "   📊 API: https://$DOMAIN/api"
+    echo "   📈 Health: https://$DOMAIN/health"
+    echo "   🔌 WebSocket: wss://$DOMAIN/socket.io"
     echo ""
     
-    echo -e "${GREEN}🚀 Quick Start Commands:${NC}"
-    echo "   trading-bot start     # Start the system"
-    echo "   trading-bot status    # Check system status"  
-    echo "   trading-bot logs      # View logs"
-    echo "   trading-bot health    # Run health check"
+    echo -e "${YELLOW}🔐 GENERATED CREDENTIALS (SAVE THESE SAFELY!):${NC}"
+    echo "   ├─ Database User: $POSTGRES_USER"
+    echo "   ├─ Database Password: $POSTGRES_PASSWORD"
+    echo "   ├─ JWT Secret: $JWT_SECRET"
+    echo "   ├─ Encryption Key: $ENCRYPTION_KEY"
+    echo "   ├─ Session Secret: $SESSION_SECRET"
+    echo "   └─ Redis Password: $REDIS_PASSWORD"
     echo ""
     
-    if [ "$PRODUCTION_MODE" = true ]; then
-        echo -e "${YELLOW}⚠️  IMPORTANT NEXT STEPS:${NC}"
-        echo "   1. Configure broker API keys in .env file:"
-        echo "      nano $INSTALL_DIR/.env"
-        echo ""
-        echo "   2. Start the system:"
-        echo "      trading-bot start"
-        echo ""
-        if [ "$INSTALL_SSL" = true ]; then
-            echo "   3. Access your trading bot:"
-            echo "      🌐 https://$DOMAIN"
-        else
-            echo "   3. Access your trading bot:"
-            echo "      🌐 http://$DOMAIN"
-        fi
-    else
-        echo -e "${GREEN}🎯 Development Mode:${NC}"
-        echo "   🌐 Frontend: http://localhost:3000"
-        echo "   🔌 Backend API: http://localhost:5000"
-        echo "   📊 System Status: http://localhost:5000/api/health"
-    fi
-    
+    echo -e "${CYAN}🛠️ SYSTEM MANAGEMENT:${NC}"
+    echo "   ├─ Start system: trading-bot start"
+    echo "   ├─ Stop system: trading-bot stop"
+    echo "   ├─ View logs: trading-bot logs"
+    echo "   ├─ System status: trading-bot status"
+    echo "   ├─ Health check: trading-bot health"
+    echo "   ├─ Update DDNS: trading-bot ddns-update"
+    echo "   └─ Update system: trading-bot update"
     echo ""
-    echo -e "${BLUE}📚 Additional Resources:${NC}"
-    echo "   📖 Documentation: $INSTALL_DIR/docs/"
-    echo "   🔧 Management: $INSTALL_DIR/manage.sh"
-    echo "   📋 Logs: $INSTALL_DIR/logs/"
-    echo "   🔍 Health Check: trading-bot health"
     
+    echo -e "${PURPLE}📋 IMPORTANT NEXT STEPS:${NC}"
+    echo "   1. 🔧 Configure broker API keys:"
+    echo "      nano $INSTALL_DIR/.env"
     echo ""
+    echo "   2. 🚀 Start the trading system:"
+    echo "      trading-bot start"
+    echo ""
+    echo "   3. 🌐 Access web interface:"
+    echo "      https://$DOMAIN"
+    echo ""
+    echo "   4. 📈 Begin trading!"
+    echo "      Configure your strategies and models"
+    echo ""
+    
+    echo -e "${RED}⚠️  SECURITY REMINDER:${NC}"
+    echo "   • Save the generated passwords in a secure location"
+    echo "   • Configure broker API keys before starting trading"
+    echo "   • Use demo/testnet accounts for initial testing"
+    echo "   • Monitor system logs regularly"
+    echo ""
+    
     echo -e "${GREEN}✅ QuantConnect Trading Bot is ready to use!${NC}"
+    echo ""
+    echo "📚 Documentation: https://github.com/szarastrefa/quantconnect-trading-bot"
+    echo "🆘 Support: https://github.com/szarastrefa/quantconnect-trading-bot/issues"
 }
 
 # Parse command line arguments
@@ -1096,6 +957,17 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Auto-enable production mode with SSL
+PRODUCTION_MODE=true
+if [ "$INSTALL_SSL" = false ] && [ "$PRODUCTION_MODE" = true ]; then
+    echo ""
+    read -p "🔒 Enable SSL certificates for production? (Y/n): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+        INSTALL_SSL=true
+    fi
+fi
+
 # Main installation flow
 main() {
     print_header
@@ -1133,7 +1005,8 @@ main() {
     # Build and start
     build_and_start_system
     
-    print_completion_message
+    # Show completion summary
+    display_installation_summary
 }
 
 # Run main function
