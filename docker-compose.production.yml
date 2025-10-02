@@ -1,5 +1,13 @@
 version: '3.8'
 
+# Production optimizations and monitoring
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+    labels: "service,environment"
+
 services:
   # Nginx Reverse Proxy with SSL
   nginx:
@@ -18,6 +26,7 @@ services:
     networks:
       - trading_network
     restart: unless-stopped
+    logging: *default-logging
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:80/health"]
       interval: 30s
@@ -56,6 +65,7 @@ services:
     networks:
       - trading_network
     restart: unless-stopped
+    logging: *default-logging
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
       interval: 30s
@@ -91,6 +101,7 @@ services:
     networks:
       - trading_network
     restart: unless-stopped
+    logging: *default-logging
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000"]
       interval: 30s
@@ -125,6 +136,7 @@ services:
     networks:
       - trading_network
     restart: unless-stopped
+    logging: *default-logging
     deploy:
       resources:
         limits:
@@ -150,6 +162,7 @@ services:
     networks:
       - trading_network
     restart: unless-stopped
+    logging: *default-logging
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-trading_bot}"]
       interval: 30s
@@ -192,6 +205,7 @@ services:
     networks:
       - trading_network
     restart: unless-stopped
+    logging: *default-logging
     healthcheck:
       test: ["CMD", "redis-cli", "--no-auth-warning", "ping"]
       interval: 30s
@@ -220,6 +234,7 @@ services:
     restart: unless-stopped
     networks:
       - trading_network
+    logging: *default-logging
     healthcheck:
       test: ["CMD", "python", "-c", "import requests; requests.get('https://ifconfig.me', timeout=5)"]
       interval: 300s
@@ -256,6 +271,7 @@ services:
     networks:
       - trading_network
     restart: unless-stopped
+    logging: *default-logging
     deploy:
       resources:
         limits:
@@ -281,6 +297,7 @@ services:
         done
       '
     restart: unless-stopped
+    logging: *default-logging
     deploy:
       resources:
         limits:
@@ -315,32 +332,3 @@ networks:
     driver_opts:
       com.docker.network.bridge.name: trading-net
       com.docker.network.driver.mtu: 1500
-
-# Production optimizations and monitoring
-x-logging: &default-logging
-  driver: "json-file"
-  options:
-    max-size: "10m"
-    max-file: "3"
-    labels: "service,environment"
-
-# Apply logging configuration to all services
-services:
-  nginx:
-    logging: *default-logging
-  api:
-    logging: *default-logging
-  frontend:
-    logging: *default-logging
-  lean_engine:
-    logging: *default-logging
-  db:
-    logging: *default-logging
-  redis:
-    logging: *default-logging
-  ddns_updater:
-    logging: *default-logging
-  monitor:
-    logging: *default-logging
-  logrotate:
-    logging: *default-logging
