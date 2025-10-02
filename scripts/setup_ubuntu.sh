@@ -16,8 +16,10 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Configuration
-DOMAIN="eqtrader.ddnskita.my.id"
-DDNS_UPDATE_URL="https://tunnel.hostddns.us/ddns/377b9a29c7bba5435e4b5d53e3ead4aa"
+# Zmiana: domyślna wartość tunelu
+TUNNEL_TYPE="localtunnel"
+DOMAIN=""
+INSTALL_SSL=false
 PROJECT_NAME="quantconnect-trading-bot"
 INSTALL_DIR="/opt/$PROJECT_NAME"
 LOG_FILE="/var/log/trading-bot-setup.log"
