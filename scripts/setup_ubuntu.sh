@@ -541,7 +541,7 @@ install_system_dependencies() {
     print_success "System dependencies installed"
 }
 
-# Install Docker with version checking
+# Install Docker with version checking and fixed SUDO_USER handling
 install_docker() {
     if [ "$SKIP_DOCKER_CHECK" = true ]; then
         print_skip "Docker installation (--skip-docker-check)"
@@ -581,9 +581,13 @@ install_docker() {
     systemctl start docker
     systemctl enable docker
     
-    # Add current user to docker group (if not root)
-    if [ "$SUDO_USER" ]; then
+    # Add current user to docker group (if not running as direct root)
+    # Fixed: Check if SUDO_USER exists and is not empty before using it
+    if [ -n "${SUDO_USER:-}" ]; then
         usermod -aG docker "$SUDO_USER" 2>/dev/null || true
+        print_verbose "Added $SUDO_USER to docker group"
+    else
+        print_verbose "Running as direct root - skipping docker group assignment"
     fi
     
     print_success "Docker installed and configured"
@@ -1038,7 +1042,7 @@ setup_tunnel() {
     esac
 }
 
-# Clone repository with backup handling
+# Clone repository with backup handling and fixed SUDO_USER
 clone_repository() {
     print_status "Cloning QuantConnect Trading Bot repository..."
     
@@ -1063,9 +1067,12 @@ clone_repository() {
     
     cd "$INSTALL_DIR"
     
-    # Set permissions
-    if [ "$SUDO_USER" ]; then
+    # Set permissions - Fixed SUDO_USER handling
+    if [ -n "${SUDO_USER:-}" ]; then
         chown -R "$SUDO_USER:$SUDO_USER" "$INSTALL_DIR" 2>/dev/null || true
+        print_verbose "Set ownership to $SUDO_USER"
+    else
+        print_verbose "Running as direct root - keeping root ownership"
     fi
     
     print_success "Repository cloned to $INSTALL_DIR"
