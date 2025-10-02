@@ -11,6 +11,8 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Configuration
@@ -29,9 +31,26 @@ SESSION_SECRET=""
 REDIS_PASSWORD=""
 
 # Default options
-PRODUCTION_MODE=false
+PRODUCTION_MODE=true
 INSTALL_SSL=false
 SKIP_DEPENDENCIES=false
+SKIP_DDNS_ERROR=false
+SKIP_SSL=false
+SKIP_FIREWALL=false
+SKIP_DOCKER_CHECK=false
+SKIP_SYSTEM_UPDATE=false
+SKIP_NGINX=false
+SKIP_POSTGRES=false
+SKIP_REDIS=false
+SKIP_BROKER_SETUP=false
+SKIP_ML_SETUP=false
+FORCE_INSTALL=false
+DEV_MODE=false
+MINIMAL=false
+INTERACTIVE=false
+VERBOSE=false
+QUIET=false
+NO_AUTO_START=false
 CUSTOM_PORT=""
 DATA_DIR=""
 CONFIG_FILE=""
@@ -40,7 +59,7 @@ print_header() {
     echo -e "${BLUE}"
     echo "╔══════════════════════════════════════════════════════════════════╗"
     echo "║                 QuantConnect Trading Bot                         ║"
-    echo "║                    Ubuntu Setup Script                          ║"
+    echo "║                    Ubuntu Setup Script v2.0                     ║"
     echo "║                                                                  ║"
     echo "║  Domain: eqtrader.ddnskita.my.id                                ║"
     echo "║  DDNS: hostddns.us tunnel integration                           ║"
@@ -49,7 +68,9 @@ print_header() {
 }
 
 print_status() {
-    echo -e "${GREEN}[INFO]${NC} $1" | tee -a "$LOG_FILE"
+    if [ "$QUIET" = false ]; then
+        echo -e "${GREEN}[INFO]${NC} $1" | tee -a "$LOG_FILE"
+    fi
 }
 
 print_warning() {
@@ -58,6 +79,16 @@ print_warning() {
 
 print_error() {
     echo -e "${RED}[ERROR]${NC} $1" | tee -a "$LOG_FILE"
+}
+
+print_skip() {
+    echo -e "${CYAN}[SKIP]${NC} ⏭️ $1" | tee -a "$LOG_FILE"
+}
+
+print_verbose() {
+    if [ "$VERBOSE" = true ]; then
+        echo -e "${PURPLE}[VERBOSE]${NC} $1" | tee -a "$LOG_FILE"
+    fi
 }
 
 generate_secure_password() {
@@ -83,15 +114,22 @@ check_root() {
 }
 
 check_system_requirements() {
+    if [ "$SKIP_SYSTEM_UPDATE" = true ]; then
+        print_skip "System requirements check (--skip-system-update)"
+        return
+    fi
+    
     print_status "Checking system requirements..."
     
     # Check Ubuntu version
     if ! grep -q "Ubuntu" /etc/os-release; then
-        print_error "This script is designed for Ubuntu. Other distributions may not be supported."
-        read -p "Continue anyway? (y/N): " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            exit 1
+        print_warning "This script is designed for Ubuntu. Other distributions may not be supported."
+        if [ "$INTERACTIVE" = true ]; then
+            read -p "Continue anyway? (y/N): " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                exit 1
+            fi
         fi
     fi
     
@@ -105,52 +143,73 @@ check_system_requirements() {
     DISK_SPACE_GB=$(df / | awk 'NR==2 {printf "%.0f", $4/1024/1024}')
     if [ "$DISK_SPACE_GB" -lt 10 ]; then
         print_error "Less than 10GB free disk space available. Installation may fail."
-        exit 1
+        if [ "$FORCE_INSTALL" = false ]; then
+            exit 1
+        fi
     fi
     
     print_status "✅ System requirements check passed"
 }
 
 update_system() {
+    if [ "$SKIP_SYSTEM_UPDATE" = true ]; then
+        print_skip "System update (--skip-system-update)"
+        return
+    fi
+    
     print_status "Updating system packages..."
-    apt-get update -qq > /dev/null 2>&1
-    apt-get upgrade -y -qq > /dev/null 2>&1
-    apt-get autoremove -y -qq > /dev/null 2>&1
+    if [ "$VERBOSE" = true ]; then
+        apt-get update
+        apt-get upgrade -y
+        apt-get autoremove -y
+    else
+        apt-get update -qq > /dev/null 2>&1
+        apt-get upgrade -y -qq > /dev/null 2>&1
+        apt-get autoremove -y -qq > /dev/null 2>&1
+    fi
     print_status "✅ System packages updated"
 }
 
 install_dependencies() {
     if [ "$SKIP_DEPENDENCIES" = true ]; then
-        print_status "Skipping dependencies installation"
+        print_skip "Dependencies installation (--skip-deps)"
         return
     fi
     
     print_status "Installing system dependencies..."
     
     # Essential packages
-    apt-get install -y -qq \
-        curl \
-        wget \
-        git \
-        unzip \
-        software-properties-common \
-        apt-transport-https \
-        ca-certificates \
-        gnupg \
-        lsb-release \
-        jq \
-        htop \
-        nano \
-        ufw \
-        cron \
-        openssl \
-        > /dev/null 2>&1
+    if [ "$VERBOSE" = true ]; then
+        apt-get install -y \
+            curl wget git unzip software-properties-common \
+            apt-transport-https ca-certificates gnupg lsb-release \
+            jq htop nano ufw cron openssl
+    else
+        apt-get install -y -qq \
+            curl wget git unzip software-properties-common \
+            apt-transport-https ca-certificates gnupg lsb-release \
+            jq htop nano ufw cron openssl \
+            > /dev/null 2>&1
+    fi
     
     print_status "✅ System dependencies installed"
 }
 
 install_docker() {
+    if [ "$SKIP_DOCKER_CHECK" = true ]; then
+        print_skip "Docker installation (--skip-docker-check)"
+        return
+    fi
+    
     print_status "Installing Docker..."
+    
+    # Check if Docker is already installed
+    if command -v docker &> /dev/null; then
+        print_verbose "Docker already installed, checking version..."
+        docker --version
+        print_status "✅ Docker already installed"
+        return
+    fi
     
     # Remove old versions
     apt-get remove -y docker docker-engine docker.io containerd runc > /dev/null 2>&1 || true
@@ -180,6 +239,14 @@ install_docker() {
 install_docker_compose() {
     print_status "Installing Docker Compose..."
     
+    # Check if already installed
+    if command -v docker-compose &> /dev/null; then
+        print_verbose "Docker Compose already installed"
+        docker-compose --version
+        print_status "✅ Docker Compose already available"
+        return
+    fi
+    
     # Get latest version
     DOCKER_COMPOSE_VERSION=$(curl -s https://api.github.com/repos/docker/compose/releases/latest | jq -r .tag_name)
     
@@ -193,28 +260,57 @@ install_docker_compose() {
     print_status "✅ Docker Compose ${DOCKER_COMPOSE_VERSION} installed"
 }
 
+handle_ddns_response() {
+    local response="$1"
+    
+    # Handle all success cases including Indonesian responses
+    if echo "$response" | grep -qi "success\|berhasil\|successfully update"; then
+        print_status "✅ DDNS updated successfully"
+        return 0
+    elif echo "$response" | grep -qi "masih sama\|same address\|no change"; then
+        print_status "✅ DDNS already up-to-date (IP unchanged)"
+        return 0
+    elif echo "$response" | grep -qi "update.*to.*[0-9]"; then
+        print_status "✅ DDNS record updated"
+        return 0
+    else
+        # Unknown response
+        if [ "$SKIP_DDNS_ERROR" = true ]; then
+            print_warning "⚠️ DDNS error ignored (--skip-ddns-error specified)"
+            print_verbose "DDNS Response: $response"
+            return 0
+        else
+            print_error "❌ DDNS update failed"
+            echo "Response: $response"
+            return 1
+        fi
+    fi
+}
+
 setup_ddns() {
     print_status "Setting up DDNS integration..."
     
     # Update DDNS record
     print_status "Updating DDNS record for $DOMAIN..."
-    DDNS_RESPONSE=$(curl -s "$DDNS_UPDATE_URL")
+    DDNS_RESPONSE=$(curl -s "$DDNS_UPDATE_URL" 2>/dev/null || echo "Connection failed")
     
-    if echo "$DDNS_RESPONSE" | grep -q "success"; then
-        print_status "✅ DDNS updated successfully"
+    if handle_ddns_response "$DDNS_RESPONSE"; then
+        # Display response for debugging
         echo "$DDNS_RESPONSE" | jq '.' 2>/dev/null || echo "$DDNS_RESPONSE"
         
         # Get current IP
-        CURRENT_IP=$(echo "$DDNS_RESPONSE" | jq -r '.message' | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' || curl -s ifconfig.me)
-        print_status "Current IP: $CURRENT_IP"
+        CURRENT_IP=$(echo "$DDNS_RESPONSE" | jq -r '.message' 2>/dev/null | grep -oE '([0-9]{1,3}\\.){3}[0-9]{1,3}' || curl -s ifconfig.me 2>/dev/null || echo "unknown")
+        if [ "$CURRENT_IP" != "unknown" ]; then
+            print_status "Current IP: $CURRENT_IP"
+        fi
         
         # Setup automatic updates
         setup_ddns_cron
-        
     else
-        print_error "Failed to update DDNS record"
-        echo "$DDNS_RESPONSE"
-        exit 1
+        if [ "$SKIP_DDNS_ERROR" = false ]; then
+            print_error "DDNS setup failed. Use --skip-ddns-error to continue anyway."
+            exit 1
+        fi
     fi
 }
 
@@ -224,19 +320,19 @@ setup_ddns_cron() {
     # Create DDNS update script
     cat > /usr/local/bin/update-ddns.sh << EOF
 #!/bin/bash
-# Automatic DDNS update script
-RESPONSE=\$(curl -s "$DDNS_UPDATE_URL")
-if echo "\$RESPONSE" | grep -q "success"; then
-    logger "DDNS updated successfully for $DOMAIN"
+# Automatic DDNS update script for QuantConnect Trading Bot
+RESPONSE=\$(curl -s "$DDNS_UPDATE_URL" 2>/dev/null || echo "failed")
+if echo "\$RESPONSE" | grep -qi "success\|berhasil\|masih sama\|update"; then
+    logger "DDNS check completed for $DOMAIN"
 else
-    logger "DDNS update failed for $DOMAIN: \$RESPONSE"
+    logger "DDNS update may have failed for $DOMAIN: \$RESPONSE"
 fi
 EOF
     
     chmod +x /usr/local/bin/update-ddns.sh
     
     # Add to crontab (every 5 minutes)
-    (crontab -l 2>/dev/null; echo "*/5 * * * * /usr/local/bin/update-ddns.sh") | crontab -
+    (crontab -l 2>/dev/null; echo "*/5 * * * * /usr/local/bin/update-ddns.sh >/dev/null 2>&1") | crontab -
     
     print_status "✅ DDNS auto-update configured (every 5 minutes)"
 }
@@ -244,18 +340,28 @@ EOF
 clone_repository() {
     print_status "Cloning QuantConnect Trading Bot repository..."
     
-    # Remove existing directory if present
-    if [ -d "$INSTALL_DIR" ]; then
+    # Force install removes existing directory
+    if [ "$FORCE_INSTALL" = true ] && [ -d "$INSTALL_DIR" ]; then
+        print_warning "Force install: removing existing directory"
+        rm -rf "$INSTALL_DIR"
+    elif [ -d "$INSTALL_DIR" ]; then
         print_warning "Existing installation found. Backing up..."
         mv "$INSTALL_DIR" "${INSTALL_DIR}.backup.$(date +%Y%m%d_%H%M%S)"
     fi
     
     # Clone repository
-    git clone https://github.com/szarastrefa/quantconnect-trading-bot.git "$INSTALL_DIR"
+    if [ "$VERBOSE" = true ]; then
+        git clone https://github.com/szarastrefa/quantconnect-trading-bot.git "$INSTALL_DIR"
+    else
+        git clone https://github.com/szarastrefa/quantconnect-trading-bot.git "$INSTALL_DIR" > /dev/null 2>&1
+    fi
+    
     cd "$INSTALL_DIR"
     
     # Set permissions
-    chown -R "$SUDO_USER:$SUDO_USER" "$INSTALL_DIR" 2>/dev/null || true
+    if [ "$SUDO_USER" ]; then
+        chown -R "$SUDO_USER:$SUDO_USER" "$INSTALL_DIR" 2>/dev/null || true
+    fi
     
     print_status "✅ Repository cloned to $INSTALL_DIR"
 }
@@ -271,6 +377,7 @@ generate_all_credentials() {
     SESSION_SECRET=$(generate_secure_password)
     REDIS_PASSWORD=$(generate_secure_password)
     
+    print_verbose "Generated credentials for database, JWT, encryption, and Redis"
     print_status "✅ Secure credentials generated"
 }
 
@@ -282,19 +389,35 @@ setup_environment() {
     # Generate credentials first
     generate_all_credentials
     
+    # Determine URLs based on dev mode
+    if [ "$DEV_MODE" = true ]; then
+        API_BASE_URL="http://localhost:5000/api"
+        FRONTEND_URL="http://localhost:3000"
+        WEBSOCKET_URL="ws://localhost:5000/socket.io"
+        CORS_ORIGINS="http://localhost:3000,http://localhost:5000"
+        SSL_ENABLED_VAL="false"
+    else
+        API_BASE_URL="https://$DOMAIN/api"
+        FRONTEND_URL="https://$DOMAIN"
+        WEBSOCKET_URL="wss://$DOMAIN/socket.io"
+        CORS_ORIGINS="https://$DOMAIN"
+        SSL_ENABLED_VAL="true"
+    fi
+    
     # Create production environment file
     cat > .env << EOF
-# QuantConnect Trading Bot - Production Environment
+# QuantConnect Trading Bot - Environment Configuration
 # Generated on $(date)
+# Installation Mode: $([ "$DEV_MODE" = true ] && echo "Development" || echo "Production")
 
 # Environment Configuration
-NODE_ENV=production
-ENVIRONMENT=production
-DEBUG=false
-FLASK_ENV=production
-FLASK_DEBUG=false
+NODE_ENV=$([ "$DEV_MODE" = true ] && echo "development" || echo "production")
+ENVIRONMENT=$([ "$DEV_MODE" = true ] && echo "development" || echo "production")
+DEBUG=$([ "$DEV_MODE" = true ] && echo "true" || echo "false")
+FLASK_ENV=$([ "$DEV_MODE" = true ] && echo "development" || echo "production")
+FLASK_DEBUG=$([ "$DEV_MODE" = true ] && echo "true" || echo "false")
 
-# Domain & DDNS Configuration
+# Domain and DDNS Configuration
 DOMAIN=$DOMAIN
 DDNS_UPDATE_URL=$DDNS_UPDATE_URL
 DDNS_CHECK_INTERVAL=300
@@ -319,23 +442,23 @@ JWT_REFRESH_TOKEN_EXPIRES=2592000
 ENCRYPTION_KEY=$ENCRYPTION_KEY
 
 # API Configuration
-API_BASE_URL=https://$DOMAIN/api
-FRONTEND_URL=https://$DOMAIN
-WEBSOCKET_URL=wss://$DOMAIN/socket.io
-CORS_ORIGINS=https://$DOMAIN
-SOCKETIO_CORS_ORIGINS=https://$DOMAIN
+API_BASE_URL=$API_BASE_URL
+FRONTEND_URL=$FRONTEND_URL
+WEBSOCKET_URL=$WEBSOCKET_URL
+CORS_ORIGINS=$CORS_ORIGINS
+SOCKETIO_CORS_ORIGINS=$CORS_ORIGINS
 
 # React App Configuration
-REACT_APP_API_URL=https://$DOMAIN/api
-REACT_APP_WS_URL=wss://$DOMAIN/socket.io
+REACT_APP_API_URL=$API_BASE_URL
+REACT_APP_WS_URL=$WEBSOCKET_URL
 REACT_APP_DOMAIN=$DOMAIN
 
 # SSL Configuration
-SSL_ENABLED=true
+SSL_ENABLED=$SSL_ENABLED_VAL
 SSL_CERT_PATH=/etc/letsencrypt/live/$DOMAIN/fullchain.pem
 SSL_KEY_PATH=/etc/letsencrypt/live/$DOMAIN/privkey.pem
 
-# QuantConnect Configuration
+# QuantConnect Configuration (Configure these)
 QC_USER_ID=
 QC_API_TOKEN=
 QC_ENVIRONMENT=live-trading
@@ -345,9 +468,10 @@ MAX_DAILY_LOSS=0.05
 MAX_POSITION_SIZE=0.10
 SIGNAL_CONFIDENCE_THRESHOLD=0.60
 MAX_CONCURRENT_TRADES=10
+TRADE_TIMEOUT_SECONDS=300
 
 # Logging Configuration
-LOG_LEVEL=INFO
+LOG_LEVEL=$([ "$DEV_MODE" = true ] && echo "DEBUG" || echo "INFO")
 LOG_FILE_PATH=/app/logs/trading_bot.log
 ENABLE_JSON_LOGGING=false
 
@@ -357,7 +481,7 @@ HEALTH_CHECK_INTERVAL=30
 METRICS_RETENTION_DAYS=30
 
 # Security Configuration
-RATE_LIMIT_PER_MINUTE=60
+RATE_LIMIT_PER_MINUTE=$([ "$DEV_MODE" = true ] && echo "1000" || echo "60")
 ENABLE_CORS=true
 TRUSTED_HOSTS=$DOMAIN,localhost
 MAX_CONTENT_LENGTH=16777216
@@ -371,39 +495,42 @@ CONFIGS_DIR=/app/models/model_configs
 # Broker API Keys - CONFIGURE THESE FOR YOUR BROKERS
 # ============================================================================
 
-# Forex Brokers
+# Forex/CFD Brokers
 XM_LOGIN=YOUR_XM_LOGIN_NUMBER
 XM_PASSWORD=YOUR_XM_PASSWORD
 XM_SERVER=XM-Real
 
 XTB_USER_ID=YOUR_XTB_USER_ID
 XTB_PASSWORD=YOUR_XTB_PASSWORD
-XTB_DEMO=false
+XTB_DEMO=$([ "$DEV_MODE" = true ] && echo "true" || echo "false")
 
 IC_MARKETS_API_KEY=YOUR_IC_MARKETS_API_KEY
 IC_MARKETS_TOKEN=YOUR_IC_MARKETS_TOKEN
-IC_MARKETS_DEMO=false
+IC_MARKETS_DEMO=$([ "$DEV_MODE" = true ] && echo "true" || echo "false")
 
 IG_API_KEY=YOUR_IG_API_KEY
 IG_USERNAME=YOUR_IG_USERNAME
 IG_PASSWORD=YOUR_IG_PASSWORD
-IG_DEMO=false
+IG_DEMO=$([ "$DEV_MODE" = true ] && echo "true" || echo "false")
 
 ADMIRAL_LOGIN=YOUR_ADMIRAL_LOGIN
 ADMIRAL_PASSWORD=YOUR_ADMIRAL_PASSWORD
-ADMIRAL_SERVER=AdmiralMarkets-Live
+ADMIRAL_SERVER=AdmiralMarkets-$([ "$DEV_MODE" = true ] && echo "Demo" || echo "Live")
 
 ROBOFOREX_LOGIN=YOUR_ROBOFOREX_LOGIN
 ROBOFOREX_PASSWORD=YOUR_ROBOFOREX_PASSWORD
-ROBOFOREX_SERVER=RoboForex-Pro
+ROBOFOREX_SERVER=RoboForex-$([ "$DEV_MODE" = true ] && echo "Demo" || echo "Pro")
 
 FBS_LOGIN=YOUR_FBS_LOGIN
 FBS_PASSWORD=YOUR_FBS_PASSWORD
-FBS_SERVER=FBS-Real
+FBS_SERVER=FBS-$([ "$DEV_MODE" = true ] && echo "Demo" || echo "Real")
 
 INSTAFOREX_LOGIN=YOUR_INSTAFOREX_LOGIN
 INSTAFOREX_PASSWORD=YOUR_INSTAFOREX_PASSWORD
 INSTAFOREX_SERVER=InstaForex-Server
+
+PLUS500_USERNAME=YOUR_PLUS500_USERNAME
+PLUS500_PASSWORD=YOUR_PLUS500_PASSWORD
 
 SABIOTRADE_API_KEY=YOUR_SABIOTRADE_API_KEY
 SABIOTRADE_USERNAME=YOUR_SABIOTRADE_USERNAME
@@ -412,7 +539,7 @@ SABIOTRADE_PASSWORD=YOUR_SABIOTRADE_PASSWORD
 # Cryptocurrency Exchanges
 BINANCE_API_KEY=YOUR_BINANCE_API_KEY
 BINANCE_SECRET_KEY=YOUR_BINANCE_SECRET_KEY
-BINANCE_TESTNET=false
+BINANCE_TESTNET=$([ "$DEV_MODE" = true ] && echo "true" || echo "false")
 
 KRAKEN_API_KEY=YOUR_KRAKEN_API_KEY
 KRAKEN_SECRET_KEY=YOUR_KRAKEN_SECRET_KEY
@@ -420,28 +547,28 @@ KRAKEN_SECRET_KEY=YOUR_KRAKEN_SECRET_KEY
 COINBASE_API_KEY=YOUR_COINBASE_API_KEY
 COINBASE_SECRET_KEY=YOUR_COINBASE_SECRET_KEY
 COINBASE_PASSPHRASE=YOUR_COINBASE_PASSPHRASE
-COINBASE_SANDBOX=false
+COINBASE_SANDBOX=$([ "$DEV_MODE" = true ] && echo "true" || echo "false")
 
 BYBIT_API_KEY=YOUR_BYBIT_API_KEY
 BYBIT_SECRET_KEY=YOUR_BYBIT_SECRET_KEY
-BYBIT_TESTNET=false
+BYBIT_TESTNET=$([ "$DEV_MODE" = true ] && echo "true" || echo "false")
 
 KUCOIN_API_KEY=YOUR_KUCOIN_API_KEY
 KUCOIN_SECRET_KEY=YOUR_KUCOIN_SECRET_KEY
 KUCOIN_PASSPHRASE=YOUR_KUCOIN_PASSPHRASE
-KUCOIN_SANDBOX=false
+KUCOIN_SANDBOX=$([ "$DEV_MODE" = true ] && echo "true" || echo "false")
 
 OKX_API_KEY=YOUR_OKX_API_KEY
 OKX_SECRET_KEY=YOUR_OKX_SECRET_KEY
 OKX_PASSPHRASE=YOUR_OKX_PASSPHRASE
-OKX_DEMO=false
+OKX_DEMO=$([ "$DEV_MODE" = true ] && echo "true" || echo "false")
 
 BITFINEX_API_KEY=YOUR_BITFINEX_API_KEY
 BITFINEX_SECRET_KEY=YOUR_BITFINEX_SECRET_KEY
 
 GEMINI_API_KEY=YOUR_GEMINI_API_KEY
 GEMINI_SECRET_KEY=YOUR_GEMINI_SECRET_KEY
-GEMINI_SANDBOX=false
+GEMINI_SANDBOX=$([ "$DEV_MODE" = true ] && echo "true" || echo "false")
 
 HUOBI_API_KEY=YOUR_HUOBI_API_KEY
 HUOBI_SECRET_KEY=YOUR_HUOBI_SECRET_KEY
@@ -462,20 +589,22 @@ IB_CLIENT_ID=1
 BACKUP_ENABLED=true
 BACKUP_INTERVAL=86400
 BACKUP_RETENTION_DAYS=30
-
-# Custom Settings
-CUSTOM_SETTING_1=
-CUSTOM_SETTING_2=
 EOF
     
     # Secure the environment file
     chmod 600 .env
     
     print_status "✅ Environment configuration created"
+    
+    if [ "$VERBOSE" = true ]; then
+        print_verbose "Environment file created at: $INSTALL_DIR/.env"
+        print_verbose "Generated $(wc -l < .env) configuration lines"
+    fi
 }
 
 install_ssl_certificates() {
-    if [ "$INSTALL_SSL" = false ]; then
+    if [ "$INSTALL_SSL" = false ] || [ "$SKIP_SSL" = true ]; then
+        print_skip "SSL certificates installation"
         return
     fi
     
@@ -493,7 +622,12 @@ install_ssl_certificates() {
     # Get certificate
     print_status "Obtaining SSL certificate for $DOMAIN..."
     
-    read -p "Enter email for SSL certificate: " SSL_EMAIL
+    if [ "$INTERACTIVE" = true ]; then
+        read -p "Enter email for SSL certificate: " SSL_EMAIL
+    else
+        SSL_EMAIL="admin@$DOMAIN"
+        print_warning "Using default email: $SSL_EMAIL"
+    fi
     
     certbot certonly \
         --standalone \
@@ -513,43 +647,58 @@ install_ssl_certificates() {
         print_status "✅ SSL auto-renewal configured"
     else
         print_error "Failed to obtain SSL certificate"
-        INSTALL_SSL=false
+        if [ "$DEV_MODE" = false ]; then
+            print_warning "Continuing without SSL (development mode)"
+            INSTALL_SSL=false
+        fi
     fi
 }
 
 create_production_compose() {
-    print_status "Creating production Docker Compose configuration..."
+    print_status "Preparing Docker Compose configuration..."
     
     cd "$INSTALL_DIR"
     
-    # The docker-compose.production.yml file already exists in repo
-    # Just ensure it has the right permissions
-    if [ -f "docker-compose.production.yml" ]; then
-        chmod 644 docker-compose.production.yml
-        print_status "✅ Production Docker Compose configuration ready"
+    # Choose compose file based on mode
+    if [ "$DEV_MODE" = true ]; then
+        COMPOSE_FILE="docker-compose.yml"
     else
-        print_error "docker-compose.production.yml not found in repository"
+        COMPOSE_FILE="docker-compose.production.yml"
+    fi
+    
+    if [ -f "$COMPOSE_FILE" ]; then
+        chmod 644 "$COMPOSE_FILE"
+        print_status "✅ Docker Compose configuration ready ($COMPOSE_FILE)"
+    else
+        print_error "$COMPOSE_FILE not found in repository"
         exit 1
     fi
 }
 
 create_nginx_config() {
-    print_status "Creating Nginx production configuration..."
+    if [ "$SKIP_NGINX" = true ]; then
+        print_skip "Nginx configuration (--skip-nginx)"
+        return
+    fi
     
-    # The nginx/production.conf file already exists in repo
-    # Just ensure directory and permissions
+    print_status "Preparing Nginx configuration..."
+    
     mkdir -p "$INSTALL_DIR/nginx"
     
     if [ -f "$INSTALL_DIR/nginx/production.conf" ]; then
         chmod 644 "$INSTALL_DIR/nginx/production.conf"
         print_status "✅ Nginx configuration ready"
     else
-        print_error "nginx/production.conf not found in repository"
-        exit 1
+        print_warning "nginx/production.conf not found, services will run without reverse proxy"
     fi
 }
 
 setup_firewall() {
+    if [ "$SKIP_FIREWALL" = true ]; then
+        print_skip "Firewall configuration (--skip-firewall)"
+        return
+    fi
+    
     print_status "Configuring firewall..."
     
     # Reset UFW
@@ -566,6 +715,13 @@ setup_firewall() {
     ufw allow 80/tcp
     ufw allow 443/tcp
     
+    # Development mode - allow additional ports
+    if [ "$DEV_MODE" = true ]; then
+        ufw allow 3000/tcp  # React dev server
+        ufw allow 5000/tcp  # Flask dev server
+        print_verbose "Opened development ports 3000 and 5000"
+    fi
+    
     # Enable firewall
     ufw --force enable > /dev/null 2>&1
     
@@ -574,6 +730,12 @@ setup_firewall() {
 
 create_systemd_service() {
     print_status "Creating systemd service..."
+    
+    # Choose compose file
+    local compose_file="docker-compose.production.yml"
+    if [ "$DEV_MODE" = true ]; then
+        compose_file="docker-compose.yml"
+    fi
     
     cat > /etc/systemd/system/quantconnect-trading-bot.service << EOF
 [Unit]
@@ -586,9 +748,9 @@ After=docker.service
 Type=oneshot
 RemainAfterExit=true
 WorkingDirectory=$INSTALL_DIR
-ExecStart=/usr/local/bin/docker-compose -f docker-compose.production.yml up -d
-ExecStop=/usr/local/bin/docker-compose -f docker-compose.production.yml down
-ExecReload=/usr/local/bin/docker-compose -f docker-compose.production.yml restart
+ExecStart=/usr/local/bin/docker-compose -f $compose_file up -d
+ExecStop=/usr/local/bin/docker-compose -f $compose_file down
+ExecReload=/usr/local/bin/docker-compose -f $compose_file restart
 TimeoutStartSec=300
 TimeoutStopSec=120
 
@@ -609,8 +771,9 @@ setup_ddns_service() {
     # Create DDNS service directory
     mkdir -p "$INSTALL_DIR/services/ddns"
     
-    # Create DDNS Dockerfile
-    cat > "$INSTALL_DIR/services/ddns/Dockerfile" << 'EOF'
+    # Create DDNS Dockerfile (already exists in repo, just ensure permissions)
+    if [ ! -f "$INSTALL_DIR/services/ddns/Dockerfile" ]; then
+        cat > "$INSTALL_DIR/services/ddns/Dockerfile" << 'EOF'
 FROM python:3.11-alpine
 
 WORKDIR /app
@@ -621,136 +784,15 @@ COPY ddns_updater.py .
 
 CMD ["python", "ddns_updater.py"]
 EOF
-    
-    # Create DDNS updater script
-    cat > "$INSTALL_DIR/services/ddns/ddns_updater.py" << 'EOF'
-#!/usr/bin/env python3
-"""
-DDNS Updater Service
-Automatically updates DDNS record for eqtrader.ddnskita.my.id
-"""
-
-import os
-import time
-import json
-import asyncio
-import aiohttp
-import logging
-from datetime import datetime
-
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
-class DDNSUpdater:
-    def __init__(self):
-        self.update_url = os.getenv('DDNS_UPDATE_URL')
-        self.domain = os.getenv('DOMAIN', 'eqtrader.ddnskita.my.id')
-        self.update_interval = int(os.getenv('UPDATE_INTERVAL', '300'))  # 5 minutes
-        self.last_ip = None
-        
-    async def get_public_ip(self):
-        """Get current public IP address"""
-        ip_services = [
-            'https://ifconfig.me/ip',
-            'https://api.ipify.org',
-            'https://icanhazip.com'
-        ]
-        
-        async with aiohttp.ClientSession() as session:
-            for service in ip_services:
-                try:
-                    async with session.get(service, timeout=10) as response:
-                        if response.status == 200:
-                            ip = (await response.text()).strip()
-                            if self.validate_ip(ip):
-                                return ip
-                except Exception as e:
-                    logger.debug(f"Failed to get IP from {service}: {e}")
-                    continue
-        
-        return None
-    
-    def validate_ip(self, ip):
-        """Validate IP address format"""
-        import re
-        pattern = re.compile(
-            r'^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}'
-            r'(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$'
-        )
-        return bool(pattern.match(ip))
-    
-    async def update_ddns(self):
-        """Update DDNS record"""
-        try:
-            current_ip = await self.get_public_ip()
-            if not current_ip:
-                logger.error("Could not determine public IP")
-                return False
-                
-            # Only update if IP changed
-            if current_ip == self.last_ip:
-                logger.debug("IP hasn't changed, skipping update")
-                return True
-                
-            logger.info(f"Updating DDNS for {self.domain} to IP {current_ip}")
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.get(self.update_url, timeout=30) as response:
-                    response_text = await response.text()
-                    
-                    try:
-                        response_data = json.loads(response_text)
-                    except json.JSONDecodeError:
-                        response_data = {'message': response_text}
-                    
-                    if response_data.get('result') == 'success':
-                        self.last_ip = current_ip
-                        logger.info(f"✅ DDNS updated successfully: {response_data.get('message', '')}")
-                        return True
-                    else:
-                        logger.error(f"❌ DDNS update failed: {response_data}")
-                        return False
-                        
-        except Exception as e:
-            logger.error(f"Error updating DDNS: {e}")
-            return False
-    
-    async def run(self):
-        """Run the DDNS updater"""
-        logger.info(f"🚀 DDNS Updater started for {self.domain}")
-        logger.info(f"📡 Update interval: {self.update_interval} seconds")
-        
-        # Initial update
-        await self.update_ddns()
-        
-        # Main loop
-        while True:
-            try:
-                await asyncio.sleep(self.update_interval)
-                await self.update_ddns()
-            except KeyboardInterrupt:
-                logger.info("DDNS updater stopped")
-                break
-            except Exception as e:
-                logger.error(f"Error in main loop: {e}")
-                await asyncio.sleep(60)  # Wait before retry
-
-if __name__ == "__main__":
-    updater = DDNSUpdater()
-    asyncio.run(updater.run())
-EOF
+    fi
     
     print_status "✅ DDNS service configured"
 }
 
 create_management_script() {
-    print_status "Creating system management script..."
+    print_status "Setting up system management..."
     
-    # The manage.sh script already exists in repo
+    # The manage.sh script should exist in repo
     if [ -f "$INSTALL_DIR/scripts/manage.sh" ]; then
         chmod +x "$INSTALL_DIR/scripts/manage.sh"
         
@@ -759,8 +801,32 @@ create_management_script() {
         
         print_status "✅ Management script ready (use 'trading-bot' command globally)"
     else
-        print_error "scripts/manage.sh not found in repository"
-        exit 1
+        print_warning "scripts/manage.sh not found, creating basic management"
+        
+        # Create basic management script
+        cat > /usr/local/bin/trading-bot << 'EOF'
+#!/bin/bash
+cd /opt/quantconnect-trading-bot
+case "$1" in
+    start)
+        docker-compose -f docker-compose.production.yml up -d
+        ;;
+    stop)
+        docker-compose -f docker-compose.production.yml down
+        ;;
+    status)
+        docker-compose -f docker-compose.production.yml ps
+        ;;
+    logs)
+        docker-compose -f docker-compose.production.yml logs -f
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|status|logs}"
+        ;;
+esac
+EOF
+        chmod +x /usr/local/bin/trading-bot
+        print_status "✅ Basic management script created"
     fi
 }
 
@@ -769,26 +835,44 @@ validate_environment() {
     
     cd "$INSTALL_DIR"
     
+    # Choose compose file
+    local compose_file="docker-compose.production.yml"
+    if [ "$DEV_MODE" = true ]; then
+        compose_file="docker-compose.yml"
+    fi
+    
     # Test docker-compose configuration
-    if docker-compose -f docker-compose.production.yml config > /dev/null 2>&1; then
+    if docker-compose -f "$compose_file" config > /dev/null 2>&1; then
         print_status "✅ Docker Compose configuration valid"
     else
         print_error "❌ Invalid Docker Compose configuration"
-        print_error "Running config test for debugging:"
-        docker-compose -f docker-compose.production.yml config
+        if [ "$VERBOSE" = true ]; then
+            print_error "Configuration test output:"
+            docker-compose -f "$compose_file" config 2>&1
+        fi
         exit 1
     fi
     
     # Check .env file format
-    if grep -q "^[A-Z_][A-Z0-9_]*=[^=]*$" .env; then
+    if grep -E "^[A-Z_][A-Z0-9_]*=[^=]*$" .env > /dev/null; then
         print_status "✅ Environment file format valid"
     else
         print_error "❌ Environment file contains invalid format"
+        if [ "$VERBOSE" = true ]; then
+            print_error "Problematic lines:"
+            grep -v -E "^[A-Z_][A-Z0-9_]*=[^=]*$|^[[:space:]]*#|^[[:space:]]*$" .env | head -5
+        fi
         exit 1
     fi
 }
 
 build_and_start_system() {
+    if [ "$NO_AUTO_START" = true ]; then
+        print_skip "System build and start (--no-auto-start)"
+        print_status "✅ Installation completed without starting services"
+        return
+    fi
+    
     print_status "Building and starting the system..."
     
     cd "$INSTALL_DIR"
@@ -796,17 +880,31 @@ build_and_start_system() {
     # Validate first
     validate_environment
     
+    # Choose compose file
+    local compose_file="docker-compose.production.yml"
+    if [ "$DEV_MODE" = true ]; then
+        compose_file="docker-compose.yml"
+    fi
+    
     # Build images
     print_status "Building Docker images..."
-    docker-compose -f docker-compose.production.yml build --parallel
+    if [ "$VERBOSE" = true ]; then
+        docker-compose -f "$compose_file" build --parallel
+    else
+        docker-compose -f "$compose_file" build --parallel > /dev/null 2>&1
+    fi
     
     # Start services
     print_status "Starting services..."
-    docker-compose -f docker-compose.production.yml up -d
+    docker-compose -f "$compose_file" up -d
     
     # Wait for services to be healthy
     print_status "Waiting for services to start..."
-    sleep 45
+    local wait_time=45
+    if [ "$DEV_MODE" = true ]; then
+        wait_time=30
+    fi
+    sleep $wait_time
     
     # Check service health
     check_service_health
@@ -818,29 +916,38 @@ check_service_health() {
     print_status "Checking service health..."
     
     # Check if containers are running
-    RUNNING_CONTAINERS=$(docker ps --filter "name=trading_bot" --format "table {{.Names}}\t{{.Status}}" | grep -c "Up")
-    TOTAL_CONTAINERS=8
+    local running_containers=$(docker ps --filter "name=trading" --format "{{.Names}}" | wc -l)
+    local expected_containers=5
     
-    if [ "$RUNNING_CONTAINERS" -ge 5 ]; then
-        print_status "✅ Most containers are running ($RUNNING_CONTAINERS/$TOTAL_CONTAINERS)"
-    else
-        print_warning "⚠️ Some containers may not be running ($RUNNING_CONTAINERS/$TOTAL_CONTAINERS)"
-        print_status "Container status:"
-        docker ps --filter "name=trading_bot" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+    if [ "$DEV_MODE" = true ]; then
+        expected_containers=3
     fi
     
-    # Test API endpoint
+    if [ "$running_containers" -ge "$expected_containers" ]; then
+        print_status "✅ Services are running ($running_containers containers)"
+    else
+        print_warning "⚠️ Some services may not be running ($running_containers containers)"
+        if [ "$VERBOSE" = true ]; then
+            print_status "Container status:"
+            docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+        fi
+    fi
+    
+    # Test endpoints
     sleep 10
-    if [ "$INSTALL_SSL" = true ]; then
-        API_URL="https://$DOMAIN/health"
+    local api_url
+    if [ "$DEV_MODE" = true ]; then
+        api_url="http://localhost:5000/api/health"
+    elif [ "$INSTALL_SSL" = true ]; then
+        api_url="https://$DOMAIN/health"
     else
-        API_URL="http://localhost:80/health"
+        api_url="http://localhost:80/health"
     fi
     
-    if curl -f -s "$API_URL" > /dev/null 2>&1; then
+    if curl -f -s "$api_url" > /dev/null 2>&1; then
         print_status "✅ System is responding"
     else
-        print_warning "⚠️ System may not be ready yet (this is normal, services are starting)"
+        print_warning "⚠️ System may not be ready yet (services are still starting)"
     fi
 }
 
@@ -849,14 +956,24 @@ display_installation_summary() {
     echo -e "${GREEN}"
     echo "╔══════════════════════════════════════════════════════════════════╗"
     echo "║                 🎉 INSTALLATION COMPLETED!                      ║"
+    echo "║              QuantConnect Trading Bot v2.0                      ║"
     echo "╚══════════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
     
     echo -e "${BLUE}📍 System Information:${NC}"
-    echo "   🌐 Domain: https://$DOMAIN"
-    echo "   📊 API: https://$DOMAIN/api"
-    echo "   📈 Health: https://$DOMAIN/health"
-    echo "   🔌 WebSocket: wss://$DOMAIN/socket.io"
+    if [ "$DEV_MODE" = true ]; then
+        echo "   🧪 Mode: Development"
+        echo "   🌐 Frontend: http://localhost:3000"
+        echo "   📊 Backend API: http://localhost:5000"
+        echo "   📈 API Docs: http://localhost:5000/docs"
+    else
+        echo "   🏭 Mode: Production"
+        echo "   🌐 Domain: https://$DOMAIN"
+        echo "   📊 API: https://$DOMAIN/api"
+        echo "   📈 Health: https://$DOMAIN/health"
+        echo "   🔌 WebSocket: wss://$DOMAIN/socket.io"
+    fi
+    echo "   📁 Install Path: $INSTALL_DIR"
     echo ""
     
     echo -e "${YELLOW}🔐 GENERATED CREDENTIALS (SAVE THESE SAFELY!):${NC}"
@@ -868,41 +985,112 @@ display_installation_summary() {
     echo "   └─ Redis Password: $REDIS_PASSWORD"
     echo ""
     
-    echo -e "${CYAN}🛠️ SYSTEM MANAGEMENT:${NC}"
+    echo -e "${CYAN}🛠️ SYSTEM MANAGEMENT COMMANDS:${NC}"
     echo "   ├─ Start system: trading-bot start"
     echo "   ├─ Stop system: trading-bot stop"
+    echo "   ├─ View status: trading-bot status"
     echo "   ├─ View logs: trading-bot logs"
-    echo "   ├─ System status: trading-bot status"
     echo "   ├─ Health check: trading-bot health"
     echo "   ├─ Update DDNS: trading-bot ddns-update"
-    echo "   └─ Update system: trading-bot update"
+    echo "   ├─ Update system: trading-bot update"
+    echo "   └─ Full restart: trading-bot restart"
     echo ""
     
-    echo -e "${PURPLE}📋 IMPORTANT NEXT STEPS:${NC}"
+    echo -e "${PURPLE}📋 NEXT STEPS:${NC}"
     echo "   1. 🔧 Configure broker API keys:"
     echo "      nano $INSTALL_DIR/.env"
     echo ""
     echo "   2. 🚀 Start the trading system:"
     echo "      trading-bot start"
     echo ""
-    echo "   3. 🌐 Access web interface:"
-    echo "      https://$DOMAIN"
+    echo "   3. 🌐 Access the web interface:"
+    if [ "$DEV_MODE" = true ]; then
+        echo "      http://localhost:3000"
+    else
+        echo "      https://$DOMAIN"
+    fi
     echo ""
-    echo "   4. 📈 Begin trading!"
-    echo "      Configure your strategies and models"
-    echo ""
-    
-    echo -e "${RED}⚠️  SECURITY REMINDER:${NC}"
-    echo "   • Save the generated passwords in a secure location"
-    echo "   • Configure broker API keys before starting trading"
-    echo "   • Use demo/testnet accounts for initial testing"
-    echo "   • Monitor system logs regularly"
+    echo "   4. 📈 Upload ML models and begin trading!"
     echo ""
     
-    echo -e "${GREEN}✅ QuantConnect Trading Bot is ready to use!${NC}"
+    # Show enabled/disabled features
+    echo -e "${BLUE}🔧 Installation Features:${NC}"
+    echo "   ├─ Production Mode: $([ "$PRODUCTION_MODE" = true ] && echo "✅ Enabled" || echo "❌ Disabled")"
+    echo "   ├─ SSL/HTTPS: $([ "$INSTALL_SSL" = true ] && echo "✅ Enabled" || echo "❌ Disabled")"
+    echo "   ├─ DDNS Auto-Update: $([ "$SKIP_DDNS_ERROR" = false ] && echo "✅ Enabled" || echo "⚠️ Error Handling")"
+    echo "   ├─ Firewall: $([ "$SKIP_FIREWALL" = false ] && echo "✅ Configured" || echo "⏭️ Skipped")"
+    echo "   ├─ Nginx Proxy: $([ "$SKIP_NGINX" = false ] && echo "✅ Configured" || echo "⏭️ Skipped")"
+    echo "   └─ Auto-Start: $([ "$NO_AUTO_START" = false ] && echo "✅ Enabled" || echo "⏭️ Manual Start")"
+    echo ""
+    
+    echo -e "${GREEN}📚 DOCUMENTATION & SUPPORT:${NC}"
+    echo "   📖 README: $INSTALL_DIR/README.md"
+    echo "   🔧 Troubleshooting: $INSTALL_DIR/docs/TROUBLESHOOTING.md"
+    echo "   📊 Broker Integration: $INSTALL_DIR/docs/BROKER_WORKFLOWS.md"
+    echo "   🆘 GitHub Issues: https://github.com/szarastrefa/quantconnect-trading-bot/issues"
+    echo ""
+    
+    echo -e "${RED}⚠️  SECURITY REMINDERS:${NC}"
+    echo "   • 💾 Save generated credentials in a password manager"
+    echo "   • 🔑 Configure broker API keys before live trading"
+    echo "   • 🧪 Use demo/testnet accounts for initial testing"
+    echo "   • 📊 Monitor system logs and performance regularly"
+    echo "   • 🔄 Keep system updated with: trading-bot update"
+    echo ""
+    
+    echo -e "${GREEN}✅ QuantConnect Trading Bot is ready for algorithmic trading!${NC}"
+    echo ""
+    
+    # Final instructions based on mode
+    if [ "$DEV_MODE" = true ]; then
+        echo "🧪 Development mode enabled - start coding and testing!"
+        echo "🌐 Access: http://localhost:3000"
+    else
+        echo "🏭 Production system deployed successfully!"
+        echo "🌐 Access: https://$DOMAIN"
+    fi
+}
+
+show_help() {
+    echo "QuantConnect Trading Bot - Ubuntu Setup Script v2.0"
+    echo ""
+    echo "Usage: $0 [OPTIONS]"
+    echo ""
+    echo "🔧 Installation Modes:"
+    echo "  --production          Full production setup with SSL (default)"
+    echo "  --dev-mode           Development setup (HTTP, local ports)"
+    echo "  --minimal            Minimal installation (core services only)"
+    echo "  --interactive        Interactive setup with prompts"
+    echo ""
+    echo "⏭️ Skip Options:"
+    echo "  --skip-ddns-error    Continue if DDNS update fails"
+    echo "  --skip-ssl           Skip SSL certificate installation"
+    echo "  --skip-firewall      Skip UFW firewall configuration"
+    echo "  --skip-docker-check  Skip Docker version checks"
+    echo "  --skip-system-update Skip apt package updates"
+    echo "  --skip-nginx         Skip Nginx reverse proxy"
+    echo "  --skip-deps          Skip dependency installation"
+    echo ""
+    echo "🛠️ Advanced Options:"
+    echo "  --force-install      Remove existing installation"
+    echo "  --no-auto-start      Don't start services after build"
+    echo "  --verbose            Detailed output and logging"
+    echo "  --quiet              Minimal output"
+    echo ""
+    echo "⚙️ Customization:"
+    echo "  --domain DOMAIN      Custom domain (default: eqtrader.ddnskita.my.id)"
+    echo "  --port PORT          Custom port override"
+    echo "  --data-dir DIR       Custom data directory"
+    echo "  --config-file FILE   Custom configuration file"
+    echo ""
+    echo "📋 Examples:"
+    echo "  $0                                    # Standard production setup"
+    echo "  $0 --skip-ddns-error --force-install # Skip DDNS issues"
+    echo "  $0 --dev-mode --skip-ssl             # Development setup"
+    echo "  $0 --minimal --skip-firewall         # Minimal installation"
+    echo "  $0 --interactive                     # Interactive setup"
     echo ""
     echo "📚 Documentation: https://github.com/szarastrefa/quantconnect-trading-bot"
-    echo "🆘 Support: https://github.com/szarastrefa/quantconnect-trading-bot/issues"
 }
 
 # Parse command line arguments
@@ -912,8 +1100,86 @@ while [[ $# -gt 0 ]]; do
             PRODUCTION_MODE=true
             shift
             ;;
+        --dev-mode)
+            DEV_MODE=true
+            PRODUCTION_MODE=false
+            INSTALL_SSL=false
+            shift
+            ;;
+        --minimal)
+            MINIMAL=true
+            SKIP_SSL=true
+            SKIP_FIREWALL=true
+            SKIP_NGINX=true
+            shift
+            ;;
+        --interactive)
+            INTERACTIVE=true
+            shift
+            ;;
         --ssl)
             INSTALL_SSL=true
+            shift
+            ;;
+        --skip-ddns-error)
+            SKIP_DDNS_ERROR=true
+            shift
+            ;;
+        --skip-ssl)
+            SKIP_SSL=true
+            INSTALL_SSL=false
+            shift
+            ;;
+        --skip-firewall)
+            SKIP_FIREWALL=true
+            shift
+            ;;
+        --skip-docker-check)
+            SKIP_DOCKER_CHECK=true
+            shift
+            ;;
+        --skip-system-update)
+            SKIP_SYSTEM_UPDATE=true
+            shift
+            ;;
+        --skip-nginx)
+            SKIP_NGINX=true
+            shift
+            ;;
+        --skip-postgres)
+            SKIP_POSTGRES=true
+            shift
+            ;;
+        --skip-redis)
+            SKIP_REDIS=true
+            shift
+            ;;
+        --skip-broker-setup)
+            SKIP_BROKER_SETUP=true
+            shift
+            ;;
+        --skip-ml-setup)
+            SKIP_ML_SETUP=true
+            shift
+            ;;
+        --skip-deps)
+            SKIP_DEPENDENCIES=true
+            shift
+            ;;
+        --force-install)
+            FORCE_INSTALL=true
+            shift
+            ;;
+        --no-auto-start)
+            NO_AUTO_START=true
+            shift
+            ;;
+        --verbose)
+            VERBOSE=true
+            shift
+            ;;
+        --quiet)
+            QUIET=true
             shift
             ;;
         --domain)
@@ -932,38 +1198,56 @@ while [[ $# -gt 0 ]]; do
             CONFIG_FILE="$2"
             shift 2
             ;;
-        --skip-deps)
-            SKIP_DEPENDENCIES=true
-            shift
-            ;;
-        --help)
-            echo "Usage: $0 [OPTIONS]"
-            echo ""
-            echo "Options:"
-            echo "  --production          Enable production mode"
-            echo "  --ssl                 Install SSL certificates"
-            echo "  --domain DOMAIN       Custom domain (default: eqtrader.ddnskita.my.id)"
-            echo "  --port PORT           Custom port"
-            echo "  --data-dir DIR        Custom data directory"
-            echo "  --config-file FILE    Custom config file"
-            echo "  --skip-deps           Skip dependency installation"
-            echo "  --help                Show this help"
+        --help|-h)
+            show_help
             exit 0
             ;;
         *)
             print_error "Unknown option: $1"
+            echo ""
+            echo "Use --help to see available options"
             exit 1
             ;;
     esac
 done
 
-# Auto-enable production mode with SSL
-PRODUCTION_MODE=true
-if [ "$INSTALL_SSL" = false ] && [ "$PRODUCTION_MODE" = true ]; then
+# Interactive mode prompts
+if [ "$INTERACTIVE" = true ]; then
     echo ""
-    read -p "🔒 Enable SSL certificates for production? (Y/n): " -n 1 -r
+    echo "🔧 Interactive Setup Mode"
+    echo ""
+    
+    read -p "Enable production mode? (Y/n): " -n 1 -r
     echo
-    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+    if [[ $REPLY =~ ^[Nn]$ ]]; then
+        PRODUCTION_MODE=false
+        DEV_MODE=true
+    fi
+    
+    if [ "$PRODUCTION_MODE" = true ]; then
+        read -p "Install SSL certificates? (Y/n): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+            INSTALL_SSL=true
+        fi
+        
+        read -p "Configure firewall? (Y/n): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Nn]$ ]]; then
+            SKIP_FIREWALL=true
+        fi
+    fi
+    
+    read -p "Skip DDNS errors if they occur? (y/N): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        SKIP_DDNS_ERROR=true
+    fi
+fi
+
+# Auto-enable SSL in production mode (if not explicitly disabled)
+if [ "$PRODUCTION_MODE" = true ] && [ "$SKIP_SSL" = false ] && [ "$INSTALL_SSL" = false ]; then
+    if [ "$INTERACTIVE" = false ]; then
         INSTALL_SSL=true
     fi
 fi
@@ -972,17 +1256,32 @@ fi
 main() {
     print_header
     
+    # Show selected options in verbose mode
+    if [ "$VERBOSE" = true ]; then
+        echo -e "${PURPLE}📋 Installation Configuration:${NC}"
+        echo "   Production Mode: $PRODUCTION_MODE"
+        echo "   Development Mode: $DEV_MODE"
+        echo "   Install SSL: $INSTALL_SSL"
+        echo "   Skip DDNS Error: $SKIP_DDNS_ERROR"
+        echo "   Skip Firewall: $SKIP_FIREWALL"
+        echo "   Force Install: $FORCE_INSTALL"
+        echo "   Install Directory: $INSTALL_DIR"
+        echo ""
+    fi
+    
     # System checks
     check_root
     check_system_requirements
     
     # Create log file
+    mkdir -p "$(dirname "$LOG_FILE")"
     touch "$LOG_FILE"
     
     print_status "🔧 Starting QuantConnect Trading Bot installation..."
     print_status "📅 Installation started at: $(date)"
+    print_verbose "Installation mode: $([ "$DEV_MODE" = true ] && echo "Development" || echo "Production")"
     
-    # Installation steps
+    # Installation steps with skip options
     update_system
     install_dependencies
     install_docker
@@ -991,8 +1290,11 @@ main() {
     clone_repository
     setup_environment
     
-    if [ "$INSTALL_SSL" = true ]; then
+    # SSL installation
+    if [ "$INSTALL_SSL" = true ] && [ "$SKIP_SSL" = false ]; then
         install_ssl_certificates
+    else
+        print_skip "SSL certificates installation"
     fi
     
     create_production_compose
@@ -1002,10 +1304,10 @@ main() {
     create_systemd_service
     create_management_script
     
-    # Build and start
+    # Build and start (unless skipped)
     build_and_start_system
     
-    # Show completion summary
+    # Show completion summary with all details
     display_installation_summary
 }
 
